@@ -139,6 +139,15 @@
     .star-cta { margin: 0 auto 18px; max-width: 460px; padding: 14px 16px; border: 1px solid var(--border); border-radius: 8px; background: var(--bg); color: var(--text); font-size: .92rem; }
     .star-cta a { color: var(--primary); font-weight: 800; text-decoration: none; }
     .star-cta a:hover { text-decoration: underline; }
+    .submission-card { max-width: 640px; margin: 0 auto 18px; padding: 18px; border: 1px solid var(--border); border-radius: 10px; background: var(--bg); text-align: left; }
+    .submission-title { font-weight: 800; margin-bottom: 4px; }
+    .submission-note { color: var(--text-muted); font-size: .86rem; margin-bottom: 14px; }
+    .submission-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; margin-bottom: 14px; }
+    .submission-card label { display: flex; flex-direction: column; gap: 5px; font-size: .82rem; font-weight: 700; color: var(--text-muted); }
+    .submission-card input { width: 100%; border: 1px solid var(--border); border-radius: 7px; padding: 10px 11px; font: inherit; color: var(--text); background: var(--surface); }
+    .submission-status { min-height: 22px; margin-top: 10px; font-size: .88rem; font-weight: 700; }
+    .submission-status.ok { color: var(--green); }
+    .submission-status.err { color: var(--red); }
     .topic-review { margin-top: 20px; text-align: left; max-height: 320px; overflow-y: auto; }
     .topic-review-title { font-size: .85rem; font-weight: 700; text-transform: uppercase; letter-spacing: .06em; color: var(--text-muted); margin-bottom: 10px; }
     .topic-row { display: flex; justify-content: space-between; align-items: center; padding: 8px 10px; border-radius: 6px; font-size: .87rem; margin-bottom: 4px; }
@@ -151,6 +160,7 @@
       .question-card { padding: 18px 14px 14px; }
       .sql-block { font-size: .76rem; }
       .topbar-stat:nth-child(2) { display: none; }
+      .submission-grid { grid-template-columns: 1fr; }
     }
   </style>
 </head>
@@ -212,6 +222,26 @@
       <div class="breakdown-item bi-wrong">  <div class="bi-num" id="res-wrong">0</div>  <div class="bi-label">Wrong</div></div>
       <div class="breakdown-item bi-skipped"><div class="bi-num" id="res-skipped">0</div><div class="bi-label">Skipped</div></div>
     </div>
+    <form class="submission-card" id="submission-form" onsubmit="submitAttempt(event)">
+      <div class="submission-title">Submit your score</div>
+      <p class="submission-note">Your score, level, and topic attempt details will be saved for learner tracking.</p>
+      <div class="submission-grid">
+        <label>Name *
+          <input id="learner-name" name="learner_name" autocomplete="name" maxlength="120" required>
+        </label>
+        <label>Email
+          <input id="learner-email" name="learner_email" type="email" autocomplete="email" maxlength="160">
+        </label>
+        <label>Phone
+          <input id="learner-phone" name="learner_phone" autocomplete="tel" maxlength="40">
+        </label>
+        <label>Batch
+          <input id="learner-batch" name="batch" maxlength="80" placeholder="e.g. Weekend Batch">
+        </label>
+      </div>
+      <button class="btn btn-primary" id="btn-submit-attempt" type="submit">Submit Score</button>
+      <div class="submission-status" id="submission-status" aria-live="polite"></div>
+    </form>
     <div class="results-actions">
       <button class="btn btn-secondary" onclick="retryLevel()">↩ Retry</button>
       <button class="btn btn-primary"   id="btn-next-level" onclick="nextLevel()">Next Level →</button>
@@ -1230,6 +1260,88 @@ function initA(l) { if (!state.answers[l]) state.answers[l] = new Array(question
 const selMap = {};
 function setSel(l,i,v){ selMap[`${l}-${i}`]=v; }
 function getSel(l,i){ return selMap[`${l}-${i}`]; }
+const SUPABASE_URL = 'https://imlgdikylqhstxltmxou.supabase.co';
+const SUPABASE_KEY = 'sb_publishable_45WoVbtaoAfv-_ZyPTl_Fw_zADhv8SP';
+const QUIZ_META = { slug: 'mysql', title: 'MySQL MCQ' };
+const levelLabels = { s1:'Easy - S1', s2:'Moderate - S2', s3:'Hard - S3', qc:'Query Challenge' };
+
+function plainText(html){
+  const tmp=document.createElement('div');
+  tmp.innerHTML=html;
+  return (tmp.textContent||tmp.innerText||'').replace(/\s+/g,' ').trim();
+}
+function setSubmissionStatus(message,kind=''){
+  const el=document.getElementById('submission-status');
+  if(!el) return;
+  el.textContent=message;
+  el.className='submission-status'+(kind?` ${kind}`:'');
+}
+function resetSubmissionState(){
+  const btn=document.getElementById('btn-submit-attempt');
+  if(btn){ btn.disabled=false; btn.textContent='Submit Score'; }
+  setSubmissionStatus('');
+}
+function currentAttemptSummary(l){
+  const ans=state.answers[l];
+  const correct=ans.filter(a=>a==='correct').length;
+  const wrong=ans.filter(a=>a==='wrong').length;
+  const skipped=ans.filter(a=>a==='skipped').length;
+  return {correct,wrong,skipped,total:ans.length};
+}
+function buildAnswerDetails(l){
+  return questions[l].map((q,i)=>{
+    const selectedIndex=getSel(l,i);
+    return {
+      question_number:i+1,
+      topic:q.topic,
+      status:state.answers[l][i],
+      selected_index:selectedIndex??null,
+      selected_answer:selectedIndex===undefined?null:plainText(q.opts[selectedIndex]),
+      correct_index:q.ans,
+      correct_answer:plainText(q.opts[q.ans])
+    };
+  });
+}
+async function submitAttempt(event){
+  event.preventDefault();
+  const name=document.getElementById('learner-name').value.trim();
+  if(name.length<2){ setSubmissionStatus('Please enter the learner name.','err'); return; }
+  const btn=document.getElementById('btn-submit-attempt');
+  btn.disabled=true; btn.textContent='Submitting...'; setSubmissionStatus('Submitting score...');
+  const l=state.level,summary=currentAttemptSummary(l);
+  const payload={
+    quiz_slug:QUIZ_META.slug,
+    quiz_title:QUIZ_META.title,
+    level_key:l,
+    level_label:levelLabels[l],
+    learner_name:name,
+    learner_email:document.getElementById('learner-email').value.trim()||null,
+    learner_phone:document.getElementById('learner-phone').value.trim()||null,
+    batch:document.getElementById('learner-batch').value.trim()||null,
+    score:summary.correct,
+    total:summary.total,
+    correct_count:summary.correct,
+    wrong_count:summary.wrong,
+    skipped_count:summary.skipped,
+    answers:buildAnswerDetails(l),
+    page_url:window.location.href,
+    user_agent:navigator.userAgent
+  };
+  try{
+    const res=await fetch(`${SUPABASE_URL}/rest/v1/quiz_attempts`,{
+      method:'POST',
+      headers:{apikey:SUPABASE_KEY,'Content-Type':'application/json',Prefer:'return=minimal'},
+      body:JSON.stringify(payload)
+    });
+    if(!res.ok) throw new Error(await res.text()||`HTTP ${res.status}`);
+    btn.textContent='Submitted';
+    setSubmissionStatus('Score submitted successfully.','ok');
+  }catch(err){
+    btn.disabled=false; btn.textContent='Submit Score';
+    setSubmissionStatus('Could not submit. Check Supabase policy/API key and try again.','err');
+    console.error('Supabase submission failed:',err);
+  }
+}
 
 // ─── Render ──────────────────────────────────────────────────
 function render() {
@@ -1319,6 +1431,7 @@ function showResults(){
   document.getElementById('score-ring').className='score-ring '+(pct>=80?'good':pct>=60?'avg':'low');
   document.getElementById('results-title').textContent=pct>=80?'🏆 Excellent!':pct>=60?'👍 Good Effort!':'📚 Keep Practising!';
   document.getElementById('results-msg').textContent=`You scored ${correct}/${total} (${pct}%)`;
+  resetSubmissionState();
   const levels=['s1','s2','s3','qc'],ci=levels.indexOf(l);
   const btnNL=document.getElementById('btn-next-level');
   btnNL.style.display=ci<levels.length-1?'':'none';
