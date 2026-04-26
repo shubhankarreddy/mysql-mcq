@@ -1504,7 +1504,7 @@ function render() {
 
   document.getElementById('btn-next').disabled = ans[qi]===null;
   document.getElementById('btn-skip').disabled = ans[qi]!==null;
-  document.getElementById('btn-next').textContent = ans.every(a=>a!==null) ? 'See Results →' : 'Next →';
+  document.getElementById('btn-next').textContent = qi===qs.length-1 ? (ans.every(a=>a!==null) ? 'See Results →' : 'Finish →') : 'Next →';
   document.getElementById('global-score').textContent = `${state.correct} / ${state.answered}`;
   document.getElementById('global-streak').textContent = state.streak;
   const allDone = ans.every(a=>a!==null);
@@ -1525,8 +1525,15 @@ function skipQuestion(){
   if(state.answers[l][qi]===null){ state.answers[l][qi]='skipped'; state.answered++; state.streak=0; }
   render();
 }
+function finishLevel(){
+  const l=state.level,ans=state.answers[l];
+  ans.forEach((value,index)=>{ if(value===null){ ans[index]='skipped'; state.answered++; } });
+  state.streak=0;
+  showResults();
+}
 function nextQuestion(){
   const l=state.level,qs=questions[l],ans=state.answers[l];
+  if(state.qi===qs.length-1){ finishLevel(); return; }
   if(ans.every(a=>a!==null)){ showResults(); return; }
   let next=(state.qi+1)%qs.length, start=next;
   while(ans[next]!==null){ next=(next+1)%qs.length; if(next===start){showResults();return;} }
